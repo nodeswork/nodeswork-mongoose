@@ -1,0 +1,11 @@
+--name       "Nodeswork Mongoose"
+--readme     README.md
+--title      "Nodeswork Mongoose Documentation"
+--private
+--quiet
+--extension  coffee
+--output     ./doc
+./src
+-
+LICENSE
+CHANGELOG.md
