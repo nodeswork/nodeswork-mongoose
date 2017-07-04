@@ -101,9 +101,10 @@ class NodesworkMongooseSchema
 
         for field in uniqueFields
           currentSchema["#{field}_unique"] = {
-            type:     PointSchema
-            api:      AUTOGEN
-            default:  PointSchema
+            type:       PointSchema
+            api:        AUTOGEN
+            default:    PointSchema
+            dataLevel:  'HIDDEN'
           }
           addIndexes.push [
             {
@@ -184,6 +185,9 @@ class NodesworkMongooseSchema
 
     _.extend mongooseSchema.statics, mongooseOptions.statics
     _.extend mongooseSchema.methods, mongooseOptions.methods
+
+    if @ExtendedKey()
+      mongooseSchema.parentSchema = @__proto__.MongooseSchema()
 
     mongooseSchema
 
