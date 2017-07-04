@@ -1,12 +1,28 @@
-### Generate CRUD KOA middlwares for mongoose models.
+### Generate CRUD KOA middlewares for mongoose models.
 ###
 
 
 _                   = require 'underscore'
 path                = require 'path'
+KoaRouter           = require 'koa-router'
 
 { logger }          = require 'nodeswork-logger'
-{ NodesworkError }  = require 'nodeswork-utils'
+{ NAMED
+  validator
+  NodesworkError }  = require 'nodeswork-utils'
+
+{ attachCallstack } = require './request-middlewares'
+
+
+
+READONLY = 'RO'
+AUTOGEN  = 'AG'
+
+
+# Patch KoaRouter
+KoaRouter::useModel = NAMED 'userModel', (model, options) ->
+  model.expose @, options
+  @
 
 
 # Generate KOA middlewares for mongoose models.
@@ -44,6 +60,17 @@ KoaMiddlewares = (schema, options={}) ->
     populate    = []
   } = options
 
+  schema.api   ?= "#{READONLY}": [], "#{AUTOGEN}": []
+  schema.eachPath (pathname, schemaType) ->
+    return unless schemaType.options.api in [ READONLY, AUTOGEN ]
+    do (schema) ->
+      while schema?
+        schema.api[schemaType.options.api] = _.union(
+          schema.api[schemaType.options.api]
+          [ pathname ]
+        )
+        schema = schema.parentSchema
+
   # Wrap middlewars to patch global options.
   wrap = (fn) -> (opts={}) ->
     opts.omits        = _.union(
@@ -63,7 +90,7 @@ KoaMiddlewares = (schema, options={}) ->
   statics.updateMiddleware = wrap updateMiddleware if 'update' in middlewares
   statics.deleteMiddleware = wrap deleteMiddleware if 'delete' in middlewares
 
-  statics.expose           = (router, options={}) ->
+  statics.expose          ?= (router, options={}) ->
     options.schema = schema
     options.model  = @
     expose router, options
@@ -113,22 +140,29 @@ createMiddleware = (options={}) ->
     transform   = _.identity
   } = options
 
-  (ctx, next) =>
+  NAMED "#{@modelName}.createMiddleware", (ctx, next) =>
     doc   = _.extend {}, ctx.request.body, ctx.overrides?.doc
 
     model =
       if fromExtend and (discriminatorKey = @schema.options.discriminatorKey)
-        NodesworkError.required doc, discriminatorKey
+        modelType = doc[discriminatorKey]
+        validator.isRequired modelType, meta: path: discriminatorKey
 
         try
-          model = @db.model modelType = doc[discriminatorKey]
+          model = @db.model modelType
         catch
-          NodesworkError.unkownValue key: discriminatorKey, value: modelType
+          validator.isRequired model, {
+            message: "Model doesn't exist"
+          }
 
         if model.schema.options.discriminatorKey != discriminatorKey
-          NodesworkError.unkownValue key: discriminatorKey, value: modelType
+          validator.isRequired null, {
+            message: "Model doesn't exist"
+          }
         model
       else @
+
+    omits       = _.union omits, @schema.api?[AUTOGEN]
 
     ctx[target] = _.omit doc, omits
 
@@ -137,7 +171,7 @@ createMiddleware = (options={}) ->
     try
       ctx[target] = await model.create ctx[target]
     catch e
-      NodesworkError.mongooseError e
+      throw NodesworkError.fromError e
 
     await model.populate ctx[target], populate if populate.length
 
@@ -170,7 +204,7 @@ getMiddleware = (options={}) ->
     transform           = _.identity
   } = options
 
-  (ctx, next) =>
+  NAMED "#{@modelName}.getMiddleware", (ctx, next) =>
     query        = ctx.overrides?.query ? {}
     query._id    = ctx.params[field]
     qp           = @findOne query
@@ -212,9 +246,9 @@ findMiddleware = (options={}) ->
     allowedQueryFields  = null
   } = options
 
-  (ctx, next) =>
-    query        = NodesworkError.parseJSON ctx.request.query.query
-    page         = NodesworkError.parseNumber ctx.request.query.page ? '0'
+  NAMED "#{@modelName}.findMiddleware", (ctx, next) =>
+    query        = validator.asJSON ctx.request.query.query
+    page         = validator.asNumber ctx.request.query.page ? '0'
     query        = _.pick query, allowedQueryFields if allowedQueryFields?
     _.extend query, ctx.overrides?.query
     qp           = @find query
@@ -234,7 +268,6 @@ findMiddleware = (options={}) ->
       ctx[target][i] = await transform ctx[target][i]
 
     ctx.body     = ctx[target] if writeToBody
-
 
 
 # Provide Koa Update middleware to update an existing model instance.
@@ -264,10 +297,15 @@ updateMiddleware = (options={}) ->
     transform           = _.identity
   } = options
 
-  (ctx, next) =>
+  NAMED "#{@modelName}.updateMiddleware", (ctx, next) =>
     query        = ctx.overrides?.query ? {}
     query._id    = ctx.params[field]
     ctx[target]  = await @findOne query
+    omits        = _.union omits, @schema.api?[READONLY], @schema.api?[AUTOGEN]
+
+    validator.isRequired ctx[target], {
+      message: "Update target doesn't exist"
+    }
 
     _.extend ctx[target], _.omit ctx.request.body, omits
     await next() if triggerNext
@@ -297,7 +335,7 @@ deleteMiddleware = (options={}) ->
     transform           = _.identity
   } = options
 
-  (ctx, next) =>
+  NAMED "#{@modelName}.deleteMiddleware", (ctx, next) =>
     query        = ctx.overrides?.query ? {}
     query._id    = ctx.params[field]
     ctx[target]  = await @findOne query
@@ -323,16 +361,22 @@ deleteMiddleware = (options={}) ->
 #   [all, One of gets or posts, One of methods or statics, individual]
 #
 # @param {KoaRouter} router specifies the target router to expose the apis to.
+# @option options {String} virtualPrefix specifies the virtual prefix used for
+#   log full path
 # @option options {Structure<String>} prefix specifies the prefix for binding
 #   the api.
 # @option options {String} idField specifies the field name in params which
 #   stores the model id when necessary.
+# @option options {Function} instanceProvider fetch instance based on ctx, if
+#   not set, a getMiddleware will be applied.
 # @option options {Structure<Array<Middleware>>} pres specifies the pre
 #   middlewares before call the actual execution functions.
 # @option options {Structure<Array<Middleware>>} posts specifies the post
 #   middlewares after call the actual execution functions.
 # @option options {Structure<Object>} options specifies the options passed to
 #   the actual execution functions.
+# @option options {Structure<Array<Middleware, Object>>} middlewares is a short
+#   cut to pres, options, and posts.
 # @option options {Array<String>} binds specifies the target function names to
 #   bind.
 # @option options {Boolean, Array<String>} cruds specifies if or which crud
@@ -343,14 +387,24 @@ expose = (router, options={}) ->
   {
     model
     schema
-    prefix       = '/'
-    idField      = 'id'
-    pres         = null
-    posts        = null
-    options      = null
-    binds        = null
-    cruds        = null
+    virtualPrefix     = ''
+    prefix            = '/'
+    idField           = 'id'
+    instanceProvider  = null
+    pres              = {}
+    posts             = {}
+    options           = {}
+    middlewares       = {}
+    binds             = null
+    cruds             = null
   }              = options
+
+  for key, chain of middlewares
+    idx          = chain.findIndex (x) -> not _.isFunction(x)
+    idx          = chain.length if idx == -1
+    pres[key]    = _.union pres[key], chain[...idx]
+    posts[key]   = _.union chain[idx+1..], posts[key] if idx + 1 < chain.length
+    options[key] = _.extend {}, options[key], chain[idx] if idx < chain.length
 
   prefix         = new Structure prefix, _.last
   pres           = new Structure pres, _.union
@@ -374,19 +428,20 @@ expose = (router, options={}) ->
   binds = _.union binds, cruds
 
   bind = (name, pathname, fnType, mdType, middlewares...) ->
-    fullpath = path.join prefix.get(name, fnType, mdType), pathname
-    args     = _.filter _.flatten [
-      fullpath
+    fullpath        = path.join prefix.get(name, fnType, mdType), pathname
+    fMiddlewares    = _.filter _.flatten [
       pres.get name, fnType, mdType
       middlewares
       posts.get name, fnType, mdType
     ]
+    fullMiddlewares = _.map fMiddlewares, (fn) -> attachCallstack fn
+    args            = [ fullpath ].concat fullMiddlewares
 
     logger.info 'Bind router', {
-      path:        fullpath
-      method:      mdType
-      fnType:      fnType
-      middlwares:  args.length - 1
+      path:         "#{virtualPrefix}#{fullpath}"
+      method:       mdType
+      fnType:       fnType
+      middlewares:  (x.name || 'unkown' for x in fMiddlewares)
     }
     fn       = switch mdType
       when 'GET' then 'get'
@@ -402,8 +457,13 @@ expose = (router, options={}) ->
       when 'update', 'create' then 'POST'
       when 'delete' then 'DELETE'
 
+
     model["#{name}Middleware"](
-      _.extend options.get(name, fnType, mdType), opts
+      _.extend(
+        triggerNext: !!posts.get(name, fnType, mdType).length
+        options.get(name, fnType, mdType)
+        opts
+      )
     )
 
   idFieldName = ":#{idField}"
@@ -429,29 +489,43 @@ expose = (router, options={}) ->
           'delete', idFieldName, 'METHOD', 'DELETE'
           getMiddleware 'delete', field: idField
         )
-      when method = schema.methods[name]?.method
-        bind(name, "#{idFieldName}/#{name}", 'METHOD', method
-          getMiddleware 'get', {
-            field: idField, triggerNext: true, writeToBody: false
-          }
-          (ctx, next) ->
-            ctx.body = await ctx.object[name] getOptionsFromCtx ctx, method
-            pms      = posts.get(name, 'METHOD', method) ? []
-            await next() if pms.length
-        )
-      when method = schema.statics[name]?.method
-        bind(name, name, 'STATIC', method
-          (ctx, next) ->
-            await model[name] getOptionsFromCtx ctx, method
-            pms = posts.get(name, 'STATIC', method) ? []
-            await next() if pms.length
-        )
+      when httpMethod = schema.methods[name]?.method
+        do (name, httpMethod) ->
+          args = _.filter [
+            name
+            if instanceProvider? then name else "#{idFieldName}/#{name}"
+            'METHOD'
+            httpMethod
+            getMiddleware 'get', {
+              field:        idField
+              triggerNext:  true
+              writeToBody:  false
+              target:       'instance'
+            } unless instanceProvider?
+            NAMED name, (ctx, next) ->
+              instance =
+                if instanceProvider? then await instanceProvider ctx
+                else ctx.instance
+              o        = getOptionsFromCtx ctx, httpMethod
+              ctx.body = await instance[name].apply instance, o
+              pms      = posts.get(name, 'METHOD', httpMethod) ? []
+              await next() if pms.length
+          ]
+          bind.apply null, args
+      when httpMethod = schema.statics[name]?.method
+        do (name, httpMethod) ->
+          bind(name, name, 'STATIC', httpMethod
+            NAMED name, (ctx, next) ->
+              await model[name].apply model, getOptionsFromCtx ctx, httpMethod
+              pms = posts.get(name, 'STATIC', httpMethod) ? []
+              await next() if pms.length
+          )
       else throw new NodesworkError 'Unable to bind function', name: name
 
 
 getOptionsFromCtx = (ctx, method) ->
-  if method == 'POST' then ctx.request.body
-  else ctx.request.query
+  if method == 'POST' then [ ctx.request.body, ctx.request.query, ctx ]
+  else [ ctx.request.query, ctx ]
 
 
 class Structure
@@ -468,8 +542,8 @@ class Structure
     @resolver _.filter _.flatten(
       [
         @options.all
-        @options[fnType.toLowerCase()]
-        @options[mdType.toLowerCase()]
+        @options["#{fnType.toLowerCase()}s"]
+        @options["#{mdType.toLowerCase()}s"]
         @options[fn]
       ]
       true
@@ -484,6 +558,8 @@ attachTags = (tags={}) ->
 
 module.exports = {
   KoaMiddlewares
-  GET:   attachTags method:  'GET'
-  POST:  attachTags method:  'POST'
+  GET:       attachTags method:  'GET'
+  POST:      attachTags method:  'POST'
+  READONLY
+  AUTOGEN
 }
