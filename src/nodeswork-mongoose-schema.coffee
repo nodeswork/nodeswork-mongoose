@@ -1,4 +1,5 @@
-mongoose  = require 'mongoose'
+_            = require 'underscore'
+mongoose     = require 'mongoose'
 
 { AUTOGEN }  = require './koa-middlewares'
 

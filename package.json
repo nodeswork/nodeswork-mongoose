@@ -1,6 +1,6 @@
 {
   "name": "nodeswork-mongoose",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Provide mongoose plugins used across nodeswork platform.",
   "main": "lib/index.js",
   "directories": {
@@ -15,11 +15,14 @@
     "should": "^11.2.1"
   },
   "peerDependencies": {
-    "mongoose": "^4.9.4"
+    "mongoose": "^4.9.4",
+    "nodeswork-logger": "0.0.2",
+    "nodeswork-utils": "0.0.2",
+    "koa-router": "^7.2.0"
   },
   "scripts": {
     "docs": "codo",
-    "test": "./node_modules/mocha/bin/mocha"
+    "test": "NODE_ENV=test mocha --timeout=10000 --trace-warnings"
   },
   "repository": {
     "type": "git",
