@@ -6,10 +6,10 @@ _                   = require 'underscore'
 path                = require 'path'
 KoaRouter           = require 'koa-router'
 
-{ logger }          = require 'nodeswork-logger'
+{ logger }          = require '@nodeswork/logger'
 { NAMED
   validator
-  NodesworkError }  = require 'nodeswork-utils'
+  NodesworkError }  = require '@nodeswork/utils'
 
 { attachCallstack } = require './request-middlewares'
 

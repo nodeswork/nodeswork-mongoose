@@ -1,3 +1,4 @@
+.codoopts
 /src
 /test/*.coffee
 /Makefile

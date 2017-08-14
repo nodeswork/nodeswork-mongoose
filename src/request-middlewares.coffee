@@ -1,6 +1,6 @@
 _                            = require 'underscore'
-{ logger }                   = require 'nodeswork-logger'
-{ NodesworkError }           = require 'nodeswork-utils'
+{ logger }                   = require '@nodeswork/logger'
+{ NodesworkError }           = require '@nodeswork/utils'
 
 
 # Log request and errors.
