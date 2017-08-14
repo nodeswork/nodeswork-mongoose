@@ -1,6 +1,6 @@
 {
   "name": "@nodeswork/mongoose",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Provide mongoose plugins used across nodeswork platform.",
   "main": "lib/index.js",
   "directories": {
@@ -23,6 +23,7 @@
   "scripts": {
     "build": "make build",
     "docs": "codo",
+    "prepublish": "npm run build",
     "test": "NODE_ENV=test mocha --timeout=10000 --trace-warnings"
   },
   "repository": {
